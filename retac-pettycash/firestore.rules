@@ -1,0 +1,284 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==================== دوال مساعدة ====================
+
+    // مسار مستند المستخدم الحالي
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    // بيانات المستخدم الحالي
+    function me() {
+      return get(userPath()).data;
+    }
+
+    // هل المستخدم مسجّل دخوله ونشط؟
+    function active() {
+      return request.auth != null
+        && exists(userPath())
+        && me().active == true;
+    }
+
+    // هل الدور هو المطلوب؟ (يتحقق من النشاط ضمنيًا)
+    function isRole(r) {
+      return active() && me().role == r;
+    }
+
+    // هل الدور واحد من القيم المسموحة؟
+    function validRole(r) {
+      return r is string && r in ['emp', 'acc', 'fin', 'admin'];
+    }
+
+    // ==================== مجموعة المستخدمين ====================
+    match /users/{uid} {
+      // القراءة: المستخدم يقرأ ملفه (بما فيها التحقق عند تسجيل الدخول أو الإيقاف)، الأدمن يقرأ الكل
+      allow get: if request.auth != null && (request.auth.uid == uid || isRole('admin'));
+      allow list: if isRole('admin');
+
+      // الإنشاء: الأدمن فقط، ولا يستطيع إنشاء مستند لنفسه
+      allow create: if isRole('admin')
+        && uid != request.auth.uid
+        && request.resource.data.keys().hasOnly(['name', 'role', 'active', 'email'])
+        && request.resource.data.keys().hasAll(['name', 'role', 'active', 'email'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && validRole(request.resource.data.role)
+        && request.resource.data.active == true
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 0;
+
+      // التعديل: الأدمن فقط، ولا يستطيع تغيير دوره أو إيقاف نفسه
+      allow update: if isRole('admin')
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'role', 'active'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && validRole(request.resource.data.role)
+        && request.resource.data.active is bool
+        && (uid != request.auth.uid
+          || (request.resource.data.role == resource.data.role
+            && request.resource.data.active == resource.data.active));
+
+      // الحذف: ممنوع تمامًا
+      allow delete: if false;
+    }
+
+    // ==================== العداد المسلسل ====================
+    match /counters/{key} {
+      allow get: if isRole('emp') || isRole('admin');
+      allow create: if (isRole('emp') || isRole('admin'))
+        && key.matches('(PC|CHQ)-[0-9]{4}')
+        && request.resource.data.keys().hasOnly(['n', 'last'])
+        && request.resource.data.n == 1;
+      allow update: if (isRole('emp') || isRole('admin'))
+        && request.resource.data.keys().hasOnly(['n', 'last'])
+        && request.resource.data.n == resource.data.n + 1;
+      allow delete: if false;
+    }
+
+    // ==================== المستفيدون ====================
+    // المدير المالي لا يرى قاعدة المستفيدين الكاملة
+    match /beneficiaries/{id} {
+      allow read: if isRole('emp') || isRole('acc') || isRole('admin');
+      allow create, update: if (isRole('emp') || isRole('admin'))
+        && request.resource.data.keys().hasOnly(['name', 'phone', 'account', 'category'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 200;
+      allow delete: if false;
+    }
+
+    // ==================== الطلبات ====================
+
+    // صلاحية الرؤية:
+    // - المسودات (draft): يراها صاحبها أو الأدمن فقط (لا يراها مدير الحسابات أو المدير المالي)
+    // - بقية الحالات: يراها الموظف، مدير الحسابات، الأدمن، والمدير المالي فقط إذا كانت finVisible == true
+    function canSee(r) {
+      return (r.status == 'draft' && (isRole('admin') || (isRole('emp') && r.createdBy == request.auth.uid)))
+        || (r.status != 'draft' && (isRole('emp') || isRole('acc') || isRole('admin')
+          || (isRole('fin') && r.finVisible == true)));
+    }
+
+    // حقول محتوى الطلب
+    function contentKeys() {
+      return ['benef', 'phone', 'account', 'category', 'amount', 'desc', 'bank', 'chq', 'due', 'fileCount'];
+    }
+
+    // التحقق من صحة المحتوى
+    function validContent(d) {
+      return d.benef is string && d.benef.size() > 0 && d.benef.size() <= 200
+        && d.phone is string && d.account is string && d.category is string
+        && d.desc is string && d.desc.size() > 0 && d.desc.size() <= 2000
+        && d.amount is number && d.amount > 0
+        && d.bank is string && d.chq is string && d.due is string
+        && (d.type == 'cash' || (d.bank.size() > 0 && d.chq.size() > 0 && d.due.size() > 0))
+        && d.fileCount is int && d.fileCount >= 0 && d.fileCount <= 3;
+    }
+
+    // سطر سجل الحركة: باسم المستخدم الحالي ووقت قريب من وقت الخادم (±15 دقيقة)
+    function validEntry(e, action) {
+      return e.keys().hasOnly(['action', 'uid', 'name', 'at', 'note'])
+        && e.keys().hasAll(['action', 'uid', 'name', 'at', 'note'])
+        && e.action == action
+        && e.uid == request.auth.uid
+        && e.name == me().name
+        && e.note is string
+        && e.at is timestamp
+        && e.at > request.time - duration.value(15, 'm')
+        && e.at < request.time + duration.value(15, 'm');
+    }
+
+    // يتحقق أن السجل يضاف إليه سطر واحد فقط ولا يعدّل أو يُحذف ما قبله
+    function appended(action) {
+      let before = resource.data.log;
+      let after = request.resource.data.log;
+      let next = after[before.size()];
+      return after.size() == before.size() + 1
+        && after == before.concat([next])
+        && validEntry(next, action);
+    }
+
+    // يتحقق أن التعديل يمس الحقول المحددة فقط
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // انتقال حالة آمن بين مرحلتين
+    function step(from, to, fin, action) {
+      return resource.data.status == from
+        && request.resource.data.status == to
+        && request.resource.data.finVisible == fin
+        && changedOnly(['status', 'finVisible', 'log', 'updatedAt'])
+        && appended(action);
+    }
+
+    // انتقال الرفض مع تسجيل المرحلة والسبب
+    function rejectStep(from, fin, stage) {
+      let note = request.resource.data.log[resource.data.log.size()].note;
+      return resource.data.status == from
+        && request.resource.data.status == 'rejected'
+        && request.resource.data.finVisible == fin
+        && changedOnly(['status', 'finVisible', 'log', 'updatedAt', 'rejectedStage', 'rejectedReason'])
+        && request.resource.data.rejectedStage == stage
+        && request.resource.data.rejectedReason is string
+        && request.resource.data.rejectedReason.size() > 0
+        && request.resource.data.rejectedReason == note
+        && appended('رفض');
+    }
+
+    // يتحقق من وجود ملاحظة (مطلوبة للرفض والإرجاع)
+    function hasNote() {
+      return request.resource.data.log[resource.data.log.size()].note.size() > 0;
+    }
+
+    match /requests/{no} {
+      // القراءة: حسب صلاحية الرؤية
+      allow read: if canSee(resource.data);
+
+      // الإنشاء: الموظف أو الأدمن، إما كمسودة (draft) أو إرسال مباشر (p1)
+      allow create: if (isRole('emp') || isRole('admin'))
+        && request.resource.data.keys().hasOnly(contentKeys().concat(
+             ['type', 'status', 'finVisible', 'createdAt', 'updatedAt', 'createdBy', 'createdName', 'log']))
+        && request.resource.data.type in ['cash', 'cheque']
+        && no.matches((request.resource.data.type == 'cash' ? 'PC' : 'CHQ') + '-ABS-[0-9]{4}-[0-9]{4,}')
+        && getAfter(/databases/$(database)/documents/counters/$(
+             (request.resource.data.type == 'cash' ? 'PC' : 'CHQ') + '-' + no.split('-')[2])).data.last == no
+        && validContent(request.resource.data)
+        && request.resource.data.status in ['draft', 'p1']
+        && request.resource.data.finVisible == false
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdName == me().name
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.log.size() == 1
+        && validEntry(
+             request.resource.data.log[0],
+             request.resource.data.status == 'draft' ? 'حفظ كمسودة' : 'إنشاء وإرسال'
+           );
+
+      allow update: if active()
+        && request.resource.data.updatedAt == request.time
+        && (
+          // ======= 1. المالك: تعديل مسودة أو إرسالها (draft -> draft | p1) =======
+          ((isRole('emp') || isRole('admin')) && resource.data.createdBy == request.auth.uid
+            && resource.data.status == 'draft'
+            && request.resource.data.status in ['draft', 'p1']
+            && request.resource.data.finVisible == false
+            && changedOnly(contentKeys().concat(['status', 'finVisible', 'log', 'updatedAt']))
+            && validContent(request.resource.data)
+            && appended(request.resource.data.status == 'p1' ? 'إرسال الطلب' : 'تعديل المسودة'))
+
+          // ======= 2. المالك: تعديل وإعادة تقديم طلب مرجّع أو مرفوض (returned/rejected -> p1) =======
+          || ((isRole('emp') || isRole('admin')) && resource.data.createdBy == request.auth.uid
+            && resource.data.status in ['returned', 'rejected']
+            && request.resource.data.status == 'p1'
+            && request.resource.data.finVisible == false
+            && changedOnly(contentKeys().concat(['status', 'finVisible', 'log', 'updatedAt']))
+            && validContent(request.resource.data)
+            && appended('تعديل وإعادة إرسال'))
+
+          // ======= 3. تأكيد الصرف: الموظف صاحب الطلب أو الأدمن، بعد الاعتماد النهائي فقط =======
+          || (((isRole('emp') && resource.data.createdBy == request.auth.uid) || isRole('admin'))
+            && resource.data.status == 'approved'
+            && request.resource.data.status == 'paid'
+            && request.resource.data.finVisible == true
+            && changedOnly(['status', 'finVisible', 'log', 'updatedAt', 'paidAt', 'paidByUid', 'paidByName', 'paymentRef'])
+            && request.resource.data.paidAt == request.time
+            && request.resource.data.paidByUid == request.auth.uid
+            && request.resource.data.paidByName == me().name
+            && request.resource.data.paymentRef is string
+            && request.resource.data.paymentRef.size() <= 100
+            && appended('تأكيد الصرف'))
+
+          // ======= 4. المرحلة الأولى: مدير الحسابات أو الأدمن (بدون موافقة ذاتية) =======
+          || ((isRole('acc') || isRole('admin'))
+            && resource.data.createdBy != request.auth.uid
+            && (
+              step('p1', 'p2', true, 'موافقة أولى')
+              || (step('p1', 'returned', false, 'إرجاع للتعديل') && hasNote())
+              || (rejectStep('p1', false, 'acc') && hasNote())
+            ))
+
+          // ======= 5. المرحلة الثانية: المدير المالي أو الأدمن (بدون موافقة ذاتية) =======
+          || ((isRole('fin') || isRole('admin'))
+            && resource.data.createdBy != request.auth.uid
+            && resource.data.finVisible == true
+            && (
+              step('p2', 'approved', true, 'اعتماد نهائي')
+              || (step('p2', 'returned', true, 'إرجاع للتعديل') && hasNote())
+              || (rejectStep('p2', true, 'fin') && hasNote())
+            ))
+        );
+
+      // الحذف: ممنوع تمامًا - الطلبات لا تُحذف أبدًا
+      allow delete: if false;
+
+      // ======= المرفقات =======
+      match /files/{fileId} {
+        function parentPath() { return /databases/$(database)/documents/requests/$(no); }
+
+        // الكتابة مسموحة فقط أثناء إنشاء/حفظ مسودة أو إرسال/إعادة إرسال الطلب إلى p1
+        function sending() {
+          let p = getAfter(parentPath()).data;
+          return (isRole('emp') || isRole('admin'))
+            && p.createdBy == request.auth.uid
+            && p.status in ['draft', 'p1']
+            && p.updatedAt == request.time;
+        }
+
+        allow read: if canSee(get(parentPath()).data);
+
+        allow create, update: if fileId in ['0', '1', '2'] && sending()
+          && request.resource.data.keys().hasOnly(['name', 'data', 'img'])
+          && request.resource.data.name is string
+          && request.resource.data.data is string
+          && request.resource.data.img is bool;
+
+        allow delete: if sending();
+      }
+    }
+  }
+}

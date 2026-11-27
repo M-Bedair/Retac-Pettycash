@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RETAC أبو سمبل | إدارة المصروفات</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<section class="login" id="login">
+  <div class="login-controls">
+    <button type="button" class="hdr-pill" id="login_theme_btn" aria-label="تبديل المظهر"></button>
+    <button type="button" class="hdr-pill" id="login_lang_btn" aria-label="تغيير اللغة">EN</button>
+  </div>
+  <form class="glass" id="lform">
+    <div class="login-brand">
+      <img class="login-logo" src="images/retac-logo.png" alt="RETAC El Arish Resort">
+    </div>
+    <div class="login-head">
+      <span class="login-badge" id="lbadge">نظام إدارة المصروفات</span>
+      <h1 id="ltitle">ريتاك أبوسمبل</h1>
+      <p id="lsub">اعتماد البيتي كاش والشيكات</p>
+    </div>
+    <label for="u" id="lu_lbl">اسم المستخدم</label><input id="u" autocomplete="username" placeholder="أدخل اسم المستخدم أو البريد" required>
+    <label for="pw" id="lpw_lbl">كلمة السر</label><input id="pw" type="password" autocomplete="current-password" placeholder="••••••••" required>
+    <div class="err" id="lerr" role="alert"></div>
+    <button type="submit" class="btn sun login-submit" id="lbtn">تسجيل الدخول</button>
+    <div class="login-foot" id="lfoot">نحو إدارة مالية أكثر كفاءة</div>
+  </form>
+</section>
+
+<div id="app" class="app-shell" hidden>
+  <aside class="sidebar" aria-label="القائمة الرئيسية">
+    <div class="sidebar-brand">
+      <img class="sidebar-logo" src="images/retac-logo.png" alt="RETAC El Arish Resort">
+    </div>
+    <div class="sidebar-user">
+      <span class="av" id="av"></span>
+      <span class="account-meta"><b id="uname"></b><small id="user_role"></small></span>
+    </div>
+    <nav id="nav" class="header-nav" aria-label="التنقل الرئيسي"></nav>
+  </aside>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <button type="button" class="sidebar-toggle" id="sidebar_toggle" aria-label="فتح القائمة">☰</button>
+      <div class="topbar-search" aria-hidden="true"><span>⌕</span><b id="topbar_search_label">Search requests, beneficiaries...</b></div>
+      <div class="account-cluster">
+        <div class="topbar-date"><span class="calendar-icon" aria-hidden="true">▦</span><span class="date-time"><b id="greeting_label"></b><span id="today_label"></span><time id="clock_label"></time></span></div>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <button type="button" class="hdr-pill" id="theme_btn" aria-label="تبديل المظهر"></button>
+        <button type="button" class="hdr-pill" id="lang_btn" aria-label="تغيير اللغة">EN</button>
+        <button class="notification-button" id="notice_btn" data-act="go" data-page="inbox" aria-label="الطلبات التي تحتاج إلى إجراء"></button>
+        <button class="logout-button" id="out_btn" aria-label="تسجيل الخروج" title="تسجيل الخروج"><span class="logout-icon" aria-hidden="true">↪</span></button>
+      </div>
+    </div>
+  </header>
+  <div class="app-layout">
+    <main id="main"></main>
+  </div>
+</div>
+
+<div class="modal" id="modal"><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,184 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- المستخدمين ----------
+    function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function me() { return get(userPath()).data; }
+    function active() { return request.auth != null && exists(userPath()) && me().active == true; }
+    function isRole(r) { return active() && me().role == r; }
+    function validRole(r) { return r is string && r in ['emp', 'acc', 'fin', 'admin']; }
+
+    match /users/{uid} {
+      allow get: if request.auth != null && (request.auth.uid == uid || isRole('admin'));
+      allow list: if isRole('admin');
+      allow create: if isRole('admin') && uid != request.auth.uid
+        && request.resource.data.keys().hasOnly(['name', 'role', 'active', 'email'])
+        && request.resource.data.keys().hasAll(['name', 'role', 'active', 'email'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && validRole(request.resource.data.role)
+        && request.resource.data.active == true
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 0;
+      allow update: if isRole('admin')
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'role', 'active'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && validRole(request.resource.data.role)
+        && request.resource.data.active is bool
+        && (uid != request.auth.uid
+          || (request.resource.data.role == resource.data.role
+            && request.resource.data.active == resource.data.active));
+      allow delete: if false;
+    }
+
+    // ---------- العداد المسلسل ----------
+    match /counters/{key} {
+      allow get: if isRole('emp') || isRole('admin');
+      allow create: if (isRole('emp') || isRole('admin'))
+        && key.matches('(PC|CHQ)-[0-9]{4}')
+        && request.resource.data.keys().hasOnly(['n', 'last'])
+        && request.resource.data.n == 1;
+      allow update: if (isRole('emp') || isRole('admin'))
+        && request.resource.data.keys().hasOnly(['n', 'last'])
+        && request.resource.data.n == resource.data.n + 1;
+    }
+
+    // ---------- المستفيدين (لا يقرأها المدير المالي) ----------
+    match /beneficiaries/{id} {
+      allow read: if isRole('emp') || isRole('acc') || isRole('admin');
+      allow create, update: if (isRole('emp') || isRole('admin'))
+        && request.resource.data.keys().hasOnly(['name', 'phone', 'account', 'category'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0;
+    }
+
+    // ---------- الطلبات ----------
+    function canSee(r) {
+      return isRole('emp') || isRole('acc') || isRole('admin')
+        || (isRole('fin') && r.finVisible == true);
+    }
+
+    function contentKeys() {
+      return ['benef', 'phone', 'account', 'category', 'amount', 'desc', 'bank', 'chq', 'due', 'fileCount'];
+    }
+
+    function validContent(d) {
+      return d.benef is string && d.benef.size() > 0 && d.benef.size() <= 200
+        && d.phone is string && d.account is string && d.category is string
+        && d.desc is string && d.desc.size() > 0 && d.desc.size() <= 2000
+        && d.amount is number && d.amount > 0
+        && d.bank is string && d.chq is string && d.due is string
+        && (d.type == 'cash' || (d.bank.size() > 0 && d.chq.size() > 0 && d.due.size() > 0))
+        && d.fileCount is int && d.fileCount >= 0 && d.fileCount <= 3;
+    }
+
+    // سطر سجل الحركة: باسم المستخدم الحالي ووقته قريب من وقت الخادم
+    function validEntry(e, action) {
+      return e.keys().hasOnly(['action', 'uid', 'name', 'at', 'note'])
+        && e.action == action
+        && e.uid == request.auth.uid
+        && e.name == me().name
+        && e.note is string
+        && e.at is timestamp
+        && e.at > request.time - duration.value(15, 'm')
+        && e.at < request.time + duration.value(15, 'm');
+    }
+
+    // السجل لا يعدل ولا يحذف: يضاف إليه سطر واحد فقط
+    function appended(action) {
+      let before = resource.data.log;
+      let after = request.resource.data.log;
+      let next = after[before.size()];
+      return after.size() == before.size() + 1
+        && after == before.concat([next])
+        && validEntry(next, action);
+    }
+
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    function step(from, to, fin, action) {
+      return resource.data.status == from
+        && request.resource.data.status == to
+        && request.resource.data.finVisible == fin
+        && changedOnly(['status', 'finVisible', 'log', 'updatedAt'])
+        && appended(action);
+    }
+
+    function hasNote() {
+      return request.resource.data.log[resource.data.log.size()].note.size() > 0;
+    }
+
+    match /requests/{no} {
+      allow read: if canSee(resource.data);
+
+      allow create: if (isRole('emp') || isRole('admin'))
+        && request.resource.data.keys().hasOnly(contentKeys().concat(
+             ['type', 'status', 'finVisible', 'createdAt', 'updatedAt', 'createdBy', 'createdName', 'log']))
+        && request.resource.data.type in ['cash', 'cheque']
+        && no.matches((request.resource.data.type == 'cash' ? 'PC' : 'CHQ') + '-ABS-[0-9]{4}-[0-9]{4,}')
+        && getAfter(/databases/$(database)/documents/counters/$(
+             (request.resource.data.type == 'cash' ? 'PC' : 'CHQ') + '-' + no.split('-')[2])).data.last == no
+        && validContent(request.resource.data)
+        && request.resource.data.status == 'p1'
+        && request.resource.data.finVisible == false
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdName == me().name
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.log.size() == 1
+        && validEntry(request.resource.data.log[0], 'إنشاء وإرسال');
+
+      allow update: if active()
+        && request.resource.data.updatedAt == request.time
+        && (
+          // الموظف صاحب الطلب: تعديل وإعادة إرسال بعد الإرجاع
+          ((isRole('emp') || isRole('admin')) && resource.data.createdBy == request.auth.uid
+            && resource.data.status == 'returned'
+            && request.resource.data.status == 'p1'
+            && request.resource.data.finVisible == false
+            && changedOnly(contentKeys().concat(['status', 'finVisible', 'log', 'updatedAt']))
+            && validContent(request.resource.data)
+            && appended('تعديل وإعادة إرسال'))
+          // الموظف صاحب الطلب: تأكيد الصرف بعد الاعتماد النهائي فقط
+          || (((isRole('emp') && resource.data.createdBy == request.auth.uid) || isRole('admin'))
+            && step('approved', 'paid', true, 'تأكيد الصرف'))
+          // مدير الحسابات أو مسؤول النظام: المرحلة الأولى
+          || ((isRole('acc') || isRole('admin')) && resource.data.createdBy != request.auth.uid && (
+               step('p1', 'p2', true, 'موافقة أولى')
+               || (step('p1', 'returned', false, 'إرجاع للتعديل') && hasNote())
+               || (step('p1', 'rejected', false, 'رفض') && hasNote())))
+          // المدير المالي أو مسؤول النظام: المرحلة الثانية بعد ظهور الطلب
+          || ((isRole('fin') || isRole('admin')) && resource.data.createdBy != request.auth.uid
+            && resource.data.finVisible == true && (
+               step('p2', 'approved', true, 'اعتماد نهائي')
+               || (step('p2', 'returned', true, 'إرجاع للتعديل') && hasNote())
+               || (step('p2', 'rejected', true, 'رفض') && hasNote())))
+        );
+
+      allow delete: if false;
+
+      // المرفقات: تكتب فقط في نفس عملية إنشاء الطلب أو إعادة إرساله
+      match /files/{fileId} {
+        function parentPath() { return /databases/$(database)/documents/requests/$(no); }
+        function sending() {
+          let p = getAfter(parentPath()).data;
+          return (isRole('emp') || isRole('admin')) && p.createdBy == request.auth.uid
+            && p.status == 'p1' && p.updatedAt == request.time;
+        }
+        allow read: if canSee(get(parentPath()).data);
+        allow create, update: if fileId in ['0', '1', '2'] && sending()
+          && request.resource.data.keys().hasOnly(['name', 'data', 'img'])
+          && request.resource.data.name is string
+          && request.resource.data.data is string
+          && request.resource.data.img is bool;
+        allow delete: if sending();
+      }
+    }
+  }
+}

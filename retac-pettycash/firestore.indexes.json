@@ -1,0 +1,6 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "files", "fieldPath": "data", "indexes": [] }
+  ]
+}

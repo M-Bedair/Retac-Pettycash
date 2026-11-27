@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RETAC أبو سمبل | إدارة المصروفات</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<section class="login" id="login">
+  <svg class="corridor" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><radialGradient id="g"><stop offset="0" stop-color="#fff2cf"/><stop offset=".35" stop-color="#ffb547"/><stop offset="1" stop-color="#ffb547" stop-opacity="0"/></radialGradient><linearGradient id="b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd58a" stop-opacity=".55"/><stop offset="1" stop-color="#ffd58a" stop-opacity="0"/></linearGradient></defs><path d="M490 800L563 52H1077L1150 800Z" fill="#17236b"/><path d="M541 735L602 103H1038L1099 735Z" fill="#1d2c82"/><path d="M592 670L642 154H998L1048 670Z" fill="#243699"/><path d="M643 605L682 205H958L997 605Z" fill="#2c42ab"/><path d="M695 540L722 256H918L945 540Z" fill="#3a52b8"/><path d="M746 474L762 306H878L894 474Z" fill="#5066c4"/><circle cx="820" cy="380" r="170" fill="url(#g)"/><path d="M798 380H842L1100 800H540Z" fill="url(#b)"/></svg>
+  <form class="glass" id="lform">
+    <div class="mark"></div>
+    <h1 style="margin-top:16px">ريتاك أبوسمبل</h1>
+    <p>اعتماد البيتي كاش والشيكات</p>
+    <label for="u">اسم المستخدم</label><input id="u" autocomplete="username" required>
+    <label for="pw">كلمة السر</label><input id="pw" type="password" autocomplete="current-password" required>
+    <div class="err" id="lerr" role="alert"></div>
+    <button type="submit" class="btn" id="lbtn">تسجيل الدخول</button>
+  </form>
+</section>
+
+<div id="app" class="app-shell" hidden>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-brand">
+        <img class="brand-logo" src="images/retac-logo.png" alt="RETAC El Arish Resort">
+      </div>
+      <div class="topbar-date"><span class="calendar-icon" aria-hidden="true">▦</span><span id="today_label"></span></div>
+      <span class="topbar-divider" aria-hidden="true"></span>
+      <div class="account-cluster">
+        <button class="notification-button" id="notice_btn" data-act="go" data-page="inbox" aria-label="الطلبات التي تحتاج إلى إجراء"></button>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <div class="account-user"><span class="av" id="av"></span><span class="account-meta"><b id="uname"></b><small id="user_role"></small></span><span class="account-chevron" aria-hidden="true">⌄</span></div>
+      </div>
+    </div>
+  </header>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <img class="brand-logo" src="images/retac-logo.png" alt="RETAC El Arish Resort">
+      </div>
+      <nav id="nav" aria-label="التنقل الرئيسي"></nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-caption">نحو إدارة مالية أكثر كفاءة</div>
+        <button class="logout-button" id="out_btn" aria-label="تسجيل الخروج"><span class="logout-icon" aria-hidden="true">↪</span><span>تسجيل الخروج</span></button>
+      </div>
+    </aside>
+    <main id="main"></main>
+  </div>
+</div>
+
+<div class="modal" id="modal"><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
